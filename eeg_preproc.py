@@ -34,7 +34,8 @@ sys.path.append('/home1/dscho/code/general')
 import data_io as dio
 from helper_funcs import Timer
 sys.path.append('/home1/dscho/code/projects')
-from time_cells import spike_preproc, events_proc, spectral_analysis
+from time_cells import spike_preproc, events_proc
+from phase_locking import spectral_analysis
 
 
 def process_eeg(subj_sess,

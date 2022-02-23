@@ -18,6 +18,7 @@ Last Edited
 """
 import sys
 import os.path as op
+from glob import glob
 import mkl
 mkl.set_num_threads(1)
 import numpy as np
@@ -27,7 +28,7 @@ sys.path.append('/home1/dscho/code/general')
 import data_io as dio
 from helper_funcs import Timer
 sys.path.append('/home1/dscho/code/projects')
-from time_cells import spike_preproc, events_proc
+from time_cells import spike_preproc, events_proc, time_bin_analysis
 
 
 def unit_to_lfp_phase_locking(unit,
@@ -371,3 +372,60 @@ def get_spike_phases(spike_times,
         spike_phases.mask = np.invert(osc_mask[:, :, spike_times])
     
     return spike_phases
+
+
+def load_all_unit_spikes(fr_thresh=0.2,
+                         nspike_thresh=500,
+                         game_states=['Encoding', 'Retrieval'],
+                         n_rois=5,
+                         sessions=None,
+                         verbose=True):
+    """Load spike times for all units across subjects and sessions."""
+    timer = Timer()
+    
+    # Load all unit spike times.
+    cols = ['subj', 'subj_sess', 'chan', 'unit',
+            'hemroi', 'n_spikes', 'fr', 'spike_times']
+    roi_map = spike_preproc.roi_mapping(n_rois)
+    if sessions is None:
+        sessions = np.unique([op.basename(f).split('-')[0]
+                              for f in glob(op.join('/data7/goldmine/analysis/events', '*.pkl'))])
+        if verbose:
+            print('{} subjects, {} sessions'
+                  .format(len(np.unique([x.split('_')[0] for x in sessions])), len(sessions)))
+
+    spikes = []
+    for subj_sess in sessions:
+        evsp = time_bin_analysis.load_event_spikes(subj_sess, verbose=0)
+        neurons = evsp.column_map['neurons']
+        spikes += [spike_preproc.load_spikes(subj_sess, neuron)
+                   for neuron in neurons]
+    spikes = pd.concat(spikes, axis=1).T[cols]
+
+    # Add ROI info.
+    roi_map = spike_preproc.roi_mapping(5)
+    spikes.insert(spikes.columns.tolist().index('hemroi')+1, 'hem', spikes['hemroi'].apply(lambda x: x[0]))
+    spikes.insert(spikes.columns.tolist().index('hemroi')+2, 'roi_gen', spikes['hemroi'].apply(lambda x: roi_map[x[1:]]))
+
+    # Calculate the number of spikes, and firing rate,
+    # of each unit during the time intervals of interest.
+    for subj_sess in sessions:
+        events = events_proc.load_events(subj_sess, verbose=0)
+        events.event_times = events.event_times.query("(gameState=={})".format(game_states)).reset_index(drop=True)
+        events.event_times['start_time'] = events.event_times['time_bins'].apply(lambda x: x[0])
+        events.event_times['stop_time'] = events.event_times['time_bins'].apply(lambda x: x[-1])
+        idx = spikes.query("(subj_sess=='{}')".format(subj_sess)).index.tolist()
+        spikes.loc[idx, 'n_spikes'] = spikes.loc[idx, 'spike_times'].apply(
+            lambda spike_times: np.sum(time_bin_analysis.spikes_per_timebin(events.event_times,
+                                                                            spike_times)))
+        spikes.loc[idx, 'fr'] = spikes.loc[idx, 'n_spikes'].apply(
+            lambda x: x / (events.event_times['time_bin_dur'].sum() * 1e-3))
+
+    # Remove units that don't have enough spikes.
+    spikes = spikes.query("(fr>{}) & (n_spikes>{})".format(fr_thresh, nspike_thresh)).reset_index(drop=True)
+    
+    if verbose:
+        print('spikes:', spikes.shape)
+        print(timer)
+        
+    return spikes
