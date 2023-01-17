@@ -20,8 +20,8 @@ import sys
 import os
 import os.path as op
 from glob import glob
-import mkl
-mkl.set_num_threads(1)
+# import mkl
+# mkl.set_num_threads(1)
 import numpy as np
 import pandas as pd
 import xarray
@@ -48,7 +48,7 @@ def timefreq_wavelet(eeg,
                      subj_sess=None,
                      roi=None,
                      output='both',
-                     output_dir='/home1/dscho/projects/unit_activity_and_hpc_theta/data2/spectral',
+                     output_dir='/home1/dscho/projects/unit_activity_and_hpc_theta/data2/goldmine/nav/spectral',
                      save_output=False,
                      overwrite=False,
                      verbose=False):
@@ -247,7 +247,7 @@ def run_fooof(subj_sess,
               peak_threshold=2,
               aperiodic_mode='fixed',
               data_dir=None,
-              output_dir='/home1/dscho/projects/unit_activity_and_hpc_theta/data2/fooof',
+              output_dir='/home1/dscho/projects/unit_activity_and_hpc_theta/data2/goldmine/nav/fooof',
               save_output=False,
               overwrite=False,
               verbose=False):
@@ -306,7 +306,7 @@ def run_p_episode(subj_sess,
                   # buffer=None,
                   return_ap_thresh=False,
                   data_dir=None,
-                  output_dir='/home1/dscho/projects/unit_activity_and_hpc_theta/data2/p_episode',
+                  output_dir='/home1/dscho/projects/unit_activity_and_hpc_theta/data2/goldmine/nav/p_episode',
                   save_output=True,
                   overwrite=False,
                   verbose=True):
@@ -412,8 +412,8 @@ def run_p_episode(subj_sess,
         return osc_mask
 
 
-def load_p_episode_pct(n_rois=5,
-                       data_dir='/home1/dscho/projects/unit_activity_and_hpc_theta/data2',
+def load_p_episode_pct(n_rois=8,
+                       data_dir='/home1/dscho/projects/unit_activity_and_hpc_theta/data2/goldmine/nav',
                        save_output=True,
                        overwrite=False,
                        verbose=True):
@@ -433,16 +433,26 @@ def load_p_episode_pct(n_rois=5,
     pep_pct = []
     for fname in pep_files:
         basename = op.basename(fname).replace('.pkl', '')
-        subj_sess, roi = basename.split('-')
+        subj_sess, hemroi = basename.split('-')
+        roi = hemroi[1:]
+        roi_gen = roi_map[roi]
         subj = subj_sess.split('_')[0]
         osc_mask = dio.open_pickle(fname)
+        game_states = np.unique(osc_mask.gameState)
         if (osc_mask.buffer > 0) & (not osc_mask.clip_buffer):
-            means = np.mean(osc_mask.values[:, :, :, osc_mask.buffer:osc_mask.time.size-osc_mask.buffer],
-                            axis=(0, 1, 3)).tolist()
+            means = {game_state: np.mean(osc_mask.values[osc_mask.gameState==game_state,
+                                                         :,
+                                                         :,
+                                                         osc_mask.buffer:osc_mask.time.size-osc_mask.buffer],
+                                         axis=(0, 1, 3))
+                     for game_state in game_states}
         else:
-            means = np.mean(osc_mask.values, axis=(0, 1, 3)).tolist()
-        pep_pct.append(([subj, subj_sess, roi, roi_map[roi[1:]]] + means))
-    cols = ['subj', 'subj_sess', 'roi', 'roi_gen'] + osc_mask.freq.values.tolist()
+            means = {game_state: np.mean(osc_mask.values[osc_mask.gameState==game_state, ...],
+                                         axis=(0, 1, 3))
+                     for game_state in game_states}
+        for game_state in game_states:
+            pep_pct.append(([game_state, subj, subj_sess, hemroi, roi, roi_gen] + means[game_state].tolist()))
+    cols = ['gameState', 'subj', 'subj_sess', 'hemroi', 'roi', 'roi_gen'] + osc_mask.freq.values.tolist()
     pep_pct = pd.DataFrame(pep_pct, columns=cols)
 
     # Save output.
@@ -454,3 +464,57 @@ def load_p_episode_pct(n_rois=5,
         print(timer)
     
     return pep_pct
+
+
+def load_pow_pct(n_rois=8,
+                 data_dir='/home1/dscho/projects/unit_activity_and_hpc_theta/data2/goldmine/nav',
+                 save_output=True,
+                 overwrite=False,
+                 verbose=True):
+    """Return the mean spectral power at each frequency, for each session."""
+    if verbose:
+        timer = Timer()
+
+    # Load outputs if they exist.
+    output_file = op.join(data_dir, 'spectral', 'power', 'pow_pct.pkl')
+    if op.exists(output_file) and not overwrite:
+        pow_pct = dio.open_pickle(output_file)
+        return pow_pct
+    
+    pow_files = glob(op.join(data_dir, 'spectral', 'power', 'U*.pkl'))
+    roi_map = spike_preproc.roi_mapping(n=n_rois)
+
+    pow_pct = []
+    for fname in pow_files:
+        basename = op.basename(fname).replace('.pkl', '')
+        subj_sess, hemroi = basename.split('-')
+        roi = hemroi[1:]
+        roi_gen = roi_map[roi]
+        subj = subj_sess.split('_')[0]
+        power = dio.open_pickle(fname)
+        game_states = np.unique(power.gameState)
+        if (power.buffer > 0) & (not power.clip_buffer):
+            means = {game_state: np.mean(power.values[power.gameState==game_state,
+                                                      :,
+                                                      :,
+                                                      power.buffer:power.time.size-power.buffer],
+                                         axis=(0, 1, 3))
+                     for game_state in game_states}
+        else:
+            means = {game_state: np.mean(power.values[power.gameState==game_state, ...],
+                                         axis=(0, 1, 3))
+                     for game_state in game_states}
+        for game_state in game_states:
+            pow_pct.append(([game_state, subj, subj_sess, hemroi, roi, roi_gen] + means[game_state].tolist()))
+    cols = ['gameState', 'subj', 'subj_sess', 'hemroi', 'roi', 'roi_gen'] + power.freq.values.tolist()
+    pow_pct = pd.DataFrame(pow_pct, columns=cols)
+
+    # Save output.
+    if save_output:
+        dio.save_pickle(pow_pct, output_file, verbose)
+    
+    if verbose:
+        print('pow_pct: {}'.format(pow_pct.shape))
+        print(timer)
+    
+    return pow_pct

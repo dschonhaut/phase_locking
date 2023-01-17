@@ -20,8 +20,8 @@ import sys
 import os
 import os.path as op
 from collections import OrderedDict as od
-import mkl
-mkl.set_num_threads(1)
+# import mkl
+# mkl.set_num_threads(1)
 import numpy as np
 import pandas as pd
 import xarray
@@ -349,7 +349,8 @@ def load_event_eeg(subj_sess,
                 eeg[..., buffer:eeg.shape[-1]-buffer], sr, fmin=1, fmax=30)
             
             # Z-score power across all dimensions except frequency.
-            zpowers = stats.zscore(powers, axis=(0, 1, 2))
+            zpowers = ((powers - np.nanmean(powers, axis=(0, 1, 2))[None, None, None, :]) /
+                       np.nanstd(powers, axis=(0, 1, 2))[None, None, None, :])
         
             # Remove channels with mean, absolute Z-power above thresh.
             keep_iChans = np.where(np.abs(np.mean(zpowers, axis=(0, 1, 3))) <= chan_exclusion_thresh)[0]
